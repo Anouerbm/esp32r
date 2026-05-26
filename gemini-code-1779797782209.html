@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Contrôle ESP32 - Connexion Firebase</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f7f6;
+            text-align: center;
+            padding: 20px;
+            margin: 0;
+        }
+        h1 { color: #333; margin-bottom: 20px; }
+        
+        /* Style du formulaire de connexion */
+        .auth-box {
+            background: white;
+            max-width: 350px;
+            margin: 50px auto;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+        .auth-box h2 { margin-top: 0; color: #444; }
+        .auth-box input {
+            width: 90%;
+            padding: 10px;
+            margin: 10px 0;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            font-size: 16px;
+        }
+        .btn-login {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 12px;
+            width: 96%;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: 0.3s;
+        }
+        .btn-login:hover { background-color: #2980b9; }
+        #error-message { color: #e74c3c; margin-top: 10px; font-weight: bold; }
+
+        /* Style du Tableau de bord (caché au début) */
+        #dashboard { display: none; }
+        
+        .container {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 20px;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        .card {
+            background: white;
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            width: 120px;
+            text-align: center;
+        }
+        .btn {
+            border: none;
+            color: white;
+            padding: 15px 20px;
+            font-size: 16px;
+            font-weight: bold;
+            border-radius: 10px;
+            cursor: pointer;
+            width: 100%;
+            margin-top: 10px;
+            transition: 0.3s;
+        }
+        .btn-off { background-color: #e74c3c; }
+        .btn-on { background-color: #2ecc71; }
+        .btn-logout {
+            background-color: #7f8c8d;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-top: 30px;
+        }
+    </style>
+
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script> <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+</head>
+<body>
+
+    <div id="auth-section" class="auth-box">
+        <h2>Connexion IoT</h2>
+        <input type="email" id="email" placeholder="Adresse e-mail" value="anouertech@gmail.com">
+        <input type="password" id="password" placeholder="Mot de passe" value="123456">
+        <button class="btn-login" onclick="connexion()">Se connecter</button>
+        <div id="error-message"></div>
+    </div>
+
+    <div id="dashboard">
+        <h1>Tableau de Bord IoT - ESP32</h1>
+        <p>Connecté en tant que : <strong id="user-display"></strong></p>
+
+        <div class="container">
+            <div class="card">
+                <h3>LED 1</h3>
+                <button id="btn1" class="btn btn-off" onclick="basculerRelais('relay1')">ÉTEINT</button>
+            </div>
+            <div class="card">
+                <h3>LED 2</h3>
+                <button id="btn2" class="btn btn-off" onclick="basculerRelais('relay2')">ÉTEINT</button>
+            </div>
+            <div class="card">
+                <h3>LED 3</h3>
+                <button id="btn3" class="btn btn-off" onclick="basculerRelais('relay3')">ÉTEINT</button>
+            </div>
+        </div>
+
+        <button class="btn-logout" onclick="deconnexion()">Se déconnecter</button>
+    </div>
+
+    <script>
+const firebaseConfig = {
+  apiKey: "AIzaSyCPvjPV9pT_XLtJdmzb76M5Zo7xQF215HA",
+  authDomain: "control-3leds-par-3bp.firebaseapp.com",
+  databaseURL: "https://control-3leds-par-3bp-default-rtdb.firebaseio.com",
+  projectId: "control-3leds-par-3bp",
+  storageBucket: "control-3leds-par-3bp.firebasestorage.app",
+  messagingSenderId: "477620788932",
+  appId: "1:477620788932:web:b6e0320fd0c9182caab391"
+};
+
+        // Initialisation de Firebase
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const database = firebase.database();
+
+        let etatsRelais = { relay1: false, relay2: false, relay3: false };
+        let listenerRef = null; // Stocke l'écoute de la base de données
+
+        // --- GESTION DE L'ÉTAT DE CONNEXION ---
+        // Firebase vérifie automatiquement si un utilisateur est connecté
+        auth.onAuthStateChanged((user) => {
+            if (user) {
+                // Utilisateur connecté -> Afficher le tableau de bord
+                document.getElementById('auth-section').style.display = 'none';
+                document.getElementById('dashboard').style.display = 'block';
+                document.getElementById('user-display').innerText = user.email;
+                document.getElementById('error-message').innerText = "";
+
+                // Démarrer l'écoute des données en temps réel
+                demarrerEcouteDatabase();
+            } else {
+                // Aucun utilisateur connecté -> Afficher le formulaire de connexion
+                document.getElementById('auth-section').style.display = 'block';
+                document.getElementById('dashboard').style.display = 'none';
+                
+                // Arrêter l'écoute si on se déconnecte
+                if (listenerRef) database.ref('/').off('value', listenerRef);
+            }
+        });
+
+        // --- FONCTION DE CONNEXION ---
+        function connexion() {
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            const errorDiv = document.getElementById('error-message');
+
+            auth.signInWithEmailAndPassword(email, password)
+                .catch((error) => {
+                    errorDiv.innerText = "Erreur : " + error.message;
+                });
+        }
+
+        // --- FONCTION DE DÉCONNEXION ---
+        function deconnexion() {
+            auth.signOut();
+        }
+
+        // --- LECTURE DES DONNÉES (Seulement si connecté) ---
+        function demarrerEcouteDatabase() {
+            listenerRef = database.ref('/').on('value', (snapshot) => {
+                const data = snapshot.val();
+                if (data) {
+                    if (data.relay1 !== undefined) { etatsRelais.relay1 = data.relay1; majBoutonUI('btn1', data.relay1); }
+                    if (data.relay2 !== undefined) { etatsRelais.relay2 = data.relay2; majBoutonUI('btn2', data.relay2); }
+                    if (data.relay3 !== undefined) { etatsRelais.relay3 = data.relay3; majBoutonUI('btn3', data.relay3); }
+                }
+            });
+        }
+
+        function majBoutonUI(idBouton, estAllume) {
+            const btn = document.getElementById(idBouton);
+            if (estAllume) {
+                btn.innerText = "ALLUMÉ";
+                btn.className = "btn btn-on";
+            } else {
+                btn.innerText = "ÉTEINT";
+                btn.className = "btn btn-off";
+            }
+        }
+
+        // --- ÉCRITURE DES DONNÉES ---
+        function basculerRelais(nomRelais) {
+            const nouvelEtat = !etatsRelais[nomRelais];
+            database.ref('/' + nomRelais).set(nouvelEtat);
+        }
+    </script>
+</body>
+</html>
